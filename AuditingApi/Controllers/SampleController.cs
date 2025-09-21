@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using AuditingApi.Models;
+using System.Collections.Concurrent;
 
 namespace AuditingApi.Controllers;
 
@@ -7,23 +8,24 @@ namespace AuditingApi.Controllers;
 [Route("api/[controller]")]
 public class SampleController : ControllerBase
 {
-    private static readonly List<SampleData> _data = new();
+    private static readonly ConcurrentDictionary<int, SampleData> _data = new();
     private static int _nextId = 1;
 
     [HttpGet]
     public ActionResult<IEnumerable<SampleData>> GetAll()
     {
-        return Ok(_data);
+        return Ok(_data.Values);
     }
 
     [HttpGet("{id}")]
     public ActionResult<SampleData> GetById(int id)
     {
-        var item = _data.FirstOrDefault(x => x.Id == id);
-        if (item == null)
-            return NotFound();
+        if (_data.TryGetValue(id, out var item))
+        {
+            return Ok(item);
+        }
         
-        return Ok(item);
+        return NotFound();
     }
 
     [HttpPost]
@@ -32,9 +34,9 @@ public class SampleController : ControllerBase
         if (data == null)
             return BadRequest("Data cannot be null");
 
-        data.Id = _nextId++;
+        data.Id = Interlocked.Increment(ref _nextId);
         data.CreatedAt = DateTime.UtcNow;
-        _data.Add(data);
+        _data.TryAdd(data.Id, data);
         
         return CreatedAtAction(nameof(GetById), new { id = data.Id }, data);
     }
@@ -45,24 +47,24 @@ public class SampleController : ControllerBase
         if (data == null)
             return BadRequest("Data cannot be null");
 
-        var existingItem = _data.FirstOrDefault(x => x.Id == id);
-        if (existingItem == null)
-            return NotFound();
+        if (_data.TryGetValue(id, out var existingItem))
+        {
+            existingItem.Name = data.Name;
+            existingItem.Description = data.Description;
+            return Ok(existingItem);
+        }
 
-        existingItem.Name = data.Name;
-        existingItem.Description = data.Description;
-        
-        return Ok(existingItem);
+        return NotFound();
     }
 
     [HttpDelete("{id}")]
     public ActionResult Delete(int id)
     {
-        var item = _data.FirstOrDefault(x => x.Id == id);
-        if (item == null)
-            return NotFound();
+        if (_data.TryRemove(id, out _))
+        {
+            return NoContent();
+        }
 
-        _data.Remove(item);
-        return NoContent();
+        return NotFound();
     }
 }

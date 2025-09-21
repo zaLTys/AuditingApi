@@ -24,7 +24,8 @@ var httpClient = new HttpClient(httpClientHandler);
 var sampleData = new
 {
     Name = "Load Test Item",
-    Description = "This is a test item created during load testing"
+    Description = "This is a test item created during load testing",
+    CreatedAt =  "2025-09-21T19:24:22.574Z"
 };
 
 var jsonContent = JsonSerializer.Serialize(sampleData);

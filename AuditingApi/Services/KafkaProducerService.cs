@@ -64,7 +64,7 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
             BatchSize = 16384,        // Batch size in bytes
             LingerMs = 1000,           // Wait up to 1000ms to fill batch
             CompressionType = CompressionType.Snappy,
-            Acks = Acks.Leader,       // Wait for leader acknowledgment only
+            Acks = Acks.All,          // Required for idempotence - wait for all replicas
             EnableIdempotence = true, // Ensure exactly-once semantics
             MaxInFlight = 5,          // Allow up to 5 batches in flight
             MessageSendMaxRetries = 3
