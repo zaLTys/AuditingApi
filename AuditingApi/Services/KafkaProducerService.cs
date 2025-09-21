@@ -28,17 +28,10 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
     {
         try
         {
-            // Create producer if not already created
+            // Create producer if not already created (reuse batch configuration)
             if (_producer == null)
             {
-                var config = new ProducerConfig
-                {
-                    BootstrapServers = _configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
-                    ClientId = "auditing-api-producer"
-                };
-
-                _producer = new ProducerBuilder<string, string>(config).Build();
-                _logger.LogInformation("Kafka producer created and connected");
+                await CreateProducerAsync();
             }
 
             var message = new Message<string, string>
@@ -47,7 +40,7 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
                 Value = JsonSerializer.Serialize(auditEntry)
             };
 
-            var result = await _producer.ProduceAsync(_topicName, message);
+            var result = await _producer!.ProduceAsync(_topicName, message);
             _logger.LogDebug("Produced audit entry {Id} to Kafka at offset {Offset}", 
                 auditEntry.Id, result.Offset);
         }
@@ -61,6 +54,28 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
         }
     }
 
+    private Task CreateProducerAsync()
+    {
+        var config = new ProducerConfig
+        {
+            BootstrapServers = _configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
+            ClientId = "auditing-api-producer",
+            // Optimized configuration for both single and batch operations
+            BatchSize = 16384,        // Batch size in bytes
+            LingerMs = 1000,           // Wait up to 1000ms to fill batch
+            CompressionType = CompressionType.Snappy,
+            Acks = Acks.Leader,       // Wait for leader acknowledgment only
+            EnableIdempotence = true, // Ensure exactly-once semantics
+            MaxInFlight = 5,          // Allow up to 5 batches in flight
+            MessageSendMaxRetries = 3
+        };
+
+        _producer = new ProducerBuilder<string, string>(config).Build();
+        _logger.LogInformation("Kafka producer created and connected with optimized batch configuration");
+        
+        return Task.CompletedTask;
+    }
+
     public async Task ProduceBatchAsync(IEnumerable<AuditEntry> auditEntries)
     {
         var entriesList = auditEntries.ToList();
@@ -69,25 +84,18 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
 
         try
         {
-            // Create producer if not already created
+            // Create producer if not already created (reuse configuration)
             if (_producer == null)
             {
-                var config = new ProducerConfig
-                {
-                    BootstrapServers = _configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
-                    ClientId = "auditing-api-producer",
-                    // Optimize for batch processing
-                    BatchSize = 16384,
-                    LingerMs = 5,
-                    CompressionType = CompressionType.Snappy
-                };
-
-                _producer = new ProducerBuilder<string, string>(config).Build();
-                _logger.LogInformation("Kafka producer created and connected for batch processing");
+                await CreateProducerAsync();
             }
 
-            var tasks = new List<Task<DeliveryResult<string, string>>>();
+            var deliveryReports = new List<Task<DeliveryResult<string, string>>>();
+            var completionSource = new TaskCompletionSource<bool>();
+            var deliveredCount = 0;
+            var totalMessages = entriesList.Count;
 
+            // Use synchronous Produce to let Kafka batch messages internally
             foreach (var auditEntry in entriesList)
             {
                 var message = new Message<string, string>
@@ -96,15 +104,35 @@ public class KafkaProducerService : IKafkaProducerService, IDisposable
                     Value = JsonSerializer.Serialize(auditEntry)
                 };
 
-                // ProduceAsync is non-blocking and batches messages internally
-                var task = _producer.ProduceAsync(_topicName, message);
-                tasks.Add(task);
+                // Use Produce (not ProduceAsync) to allow Kafka to batch messages
+                _producer!.Produce(_topicName, message, (deliveryReport) =>
+                {
+                    if (deliveryReport.Error.IsError)
+                    {
+                        _logger.LogWarning("Failed to deliver message {Key}: {Error}", 
+                            deliveryReport.Message.Key, deliveryReport.Error.Reason);
+                    }
+                    else
+                    {
+                        _logger.LogTrace("Delivered message {Key} to partition {Partition} at offset {Offset}",
+                            deliveryReport.Message.Key, deliveryReport.Partition, deliveryReport.Offset);
+                    }
+
+                    // Track completion
+                    if (Interlocked.Increment(ref deliveredCount) == totalMessages)
+                    {
+                        completionSource.SetResult(true);
+                    }
+                });
             }
 
-            // Wait for all messages to be delivered
-            var results = await Task.WhenAll(tasks);
+            // Trigger immediate send of batched messages
+            _producer!.Flush(TimeSpan.FromSeconds(10));
+
+            // Wait for all delivery reports
+            await completionSource.Task;
             
-            _logger.LogDebug("Produced batch of {Count} audit entries to Kafka", entriesList.Count);
+            _logger.LogDebug("Successfully produced batch of {Count} audit entries to Kafka", entriesList.Count);
         }
         catch (Exception ex)
         {
