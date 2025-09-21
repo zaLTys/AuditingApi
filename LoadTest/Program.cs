@@ -9,7 +9,16 @@ var configuration = new ConfigurationBuilder()
 
 var baseUrl = configuration["LoadTest:BaseUrl"] ?? "http://localhost:5000";
 var durationMinutes = configuration.GetValue<int>("LoadTest:DurationMinutes", 2);
-var ratePerSecond = configuration.GetValue<int>("LoadTest:RatePerSecond", 100);
+var ratePerSecond = configuration.GetValue<int>("LoadTest:RatePerSecond", 50);
+var maxConcurrentConnections = configuration.GetValue<int>("LoadTest:MaxConcurrentConnections", 10);
+
+// Configure HttpClient with connection pooling
+var httpClientHandler = new HttpClientHandler()
+{
+    MaxConnectionsPerServer = maxConcurrentConnections
+};
+
+var httpClient = new HttpClient(httpClientHandler);
 
 // Sample data for POST/PUT operations
 var sampleData = new
@@ -23,22 +32,18 @@ var jsonContent = JsonSerializer.Serialize(sampleData);
 // GET scenario
 var getScenario = Scenario.Create("get_all_items", async context =>
 {
-    using var httpClient = new HttpClient();
-    
     var request = Http.CreateRequest("GET", $"{baseUrl}/api/sample");
     var response = await Http.Send(httpClient, request);
     
     return response;
 })
 .WithLoadSimulations(
-    Simulation.InjectPerSec(rate: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
+    Simulation.KeepConstant(copies: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
 );
 
 // POST scenario
 var postScenario = Scenario.Create("create_item", async context =>
 {
-    using var httpClient = new HttpClient();
-    
     var request = Http.CreateRequest("POST", $"{baseUrl}/api/sample")
                      .WithJsonBody(jsonContent);
     
@@ -47,14 +52,12 @@ var postScenario = Scenario.Create("create_item", async context =>
     return response;
 })
 .WithLoadSimulations(
-    Simulation.InjectPerSec(rate: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
+    Simulation.KeepConstant(copies: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
 );
 
 // PUT scenario
 var putScenario = Scenario.Create("update_item", async context =>
 {
-    using var httpClient = new HttpClient();
-    
     var itemId = Random.Shared.Next(1, 100); // Assume items 1-100 exist
     var request = Http.CreateRequest("PUT", $"{baseUrl}/api/sample/{itemId}")
                      .WithJsonBody(jsonContent);
@@ -64,14 +67,12 @@ var putScenario = Scenario.Create("update_item", async context =>
     return response;
 })
 .WithLoadSimulations(
-    Simulation.InjectPerSec(rate: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
+    Simulation.KeepConstant(copies: ratePerSecond / 3, during: TimeSpan.FromMinutes(durationMinutes))
 );
 
 // Mixed scenario with random operations
 var mixedScenario = Scenario.Create("mixed_operations", async context =>
 {
-    using var httpClient = new HttpClient();
-    
     var operation = Random.Shared.Next(1, 4);
     
     var request = operation switch
@@ -87,7 +88,7 @@ var mixedScenario = Scenario.Create("mixed_operations", async context =>
     return response;
 })
 .WithLoadSimulations(
-    Simulation.InjectPerSec(rate: ratePerSecond, during: TimeSpan.FromMinutes(durationMinutes))
+    Simulation.KeepConstant(copies: ratePerSecond, during: TimeSpan.FromMinutes(durationMinutes))
 );
 
 Console.WriteLine($"Starting load test against: {baseUrl}");
@@ -103,3 +104,7 @@ NBomberRunner
 Console.WriteLine("Load test completed. Check the results above.");
 Console.WriteLine("Press any key to exit...");
 Console.ReadKey();
+
+// Clean up resources
+httpClient.Dispose();
+httpClientHandler.Dispose();
