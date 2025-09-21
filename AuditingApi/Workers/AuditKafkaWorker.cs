@@ -24,26 +24,40 @@ public class AuditKafkaWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var intervalMs = _configuration.GetValue<int>("Workers:KafkaWorkerIntervalMs", 1000);
+        var batchSize = _configuration.GetValue<int>("Workers:KafkaBatchSize", 100);
         
-        _logger.LogInformation("Audit Kafka Worker started with interval {IntervalMs}ms", intervalMs);
+        _logger.LogInformation("Audit Kafka Worker started with interval {IntervalMs}ms and batch size {BatchSize}", intervalMs, batchSize);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var entries = _auditStore.GetAndClearEntries();
-                var entriesList = entries.ToList();
-
-                if (entriesList.Count > 0)
+                var totalProcessed = 0;
+                
+                // Process entries in batches until queue is empty or we've processed enough
+                while (!stoppingToken.IsCancellationRequested)
                 {
-                    _logger.LogDebug("Processing {Count} audit entries", entriesList.Count);
+                    var entries = _auditStore.GetAndClearEntries(batchSize);
+                    var entriesList = entries.ToList();
 
-                    foreach (var entry in entriesList)
-                    {
-                        await _kafkaProducer.ProduceAsync(entry);
-                    }
+                    if (entriesList.Count == 0)
+                        break; // No more entries to process
 
-                    _logger.LogInformation("Successfully sent {Count} audit entries to Kafka", entriesList.Count);
+                    _logger.LogDebug("Processing batch of {Count} audit entries", entriesList.Count);
+
+                    await _kafkaProducer.ProduceBatchAsync(entriesList);
+                    totalProcessed += entriesList.Count;
+
+                    _logger.LogDebug("Successfully sent batch of {Count} audit entries to Kafka", entriesList.Count);
+                    
+                    // If we got less than the batch size, we've likely emptied the queue
+                    if (entriesList.Count < batchSize)
+                        break;
+                }
+
+                if (totalProcessed > 0)
+                {
+                    _logger.LogInformation("Successfully sent {TotalCount} audit entries to Kafka in batches", totalProcessed);
                 }
 
                 await Task.Delay(intervalMs, stoppingToken);
