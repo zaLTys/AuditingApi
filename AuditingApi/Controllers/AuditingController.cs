@@ -23,17 +23,6 @@ public class AuditingController : ControllerBase
         _configuration = configuration;
     }
 
-    /// <summary>
-    /// Retrieves paginated audit entries ordered by timestamp (latest first)
-    /// </summary>
-    /// <param name="page">Page number (starts from 1)</param>
-    /// <param name="pageSize">Number of items per page (optional, uses configured default)</param>
-    /// <param name="searchTerm">Search term to filter entries (searches in path, query, request/response body)</param>
-    /// <param name="method">HTTP method filter (GET, POST, PUT, DELETE, etc.)</param>
-    /// <param name="statusCode">HTTP status code filter</param>
-    /// <param name="startDate">Start date filter (ISO 8601 format)</param>
-    /// <param name="endDate">End date filter (ISO 8601 format)</param>
-    /// <returns>Paginated list of audit entries with metadata</returns>
     [HttpGet]
     public async Task<ActionResult<PaginatedResponse<AuditEntry>>> GetAuditEntries(
         [FromQuery] int page = 1,
@@ -82,18 +71,11 @@ public class AuditingController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Retrieves a specific audit entry by ID
-    /// </summary>
-    /// <param name="id">Audit entry ID</param>
-    /// <returns>Audit entry details</returns>
     [HttpGet("{id}")]
     public async Task<ActionResult<AuditEntry>> GetAuditEntry(string id)
     {
         try
         {
-            // For now, we'll search through paginated results to find the specific entry
-            // In a production system, you might want to add a dedicated GetByIdAsync method
             var request = new PaginationRequest
             {
                 Page = 1,
