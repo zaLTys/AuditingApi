@@ -56,7 +56,7 @@ public class AuditMongoWorker : BackgroundService
                     if (auditEntry != null)
                     {
                         await _mongoDbService.InsertAuditEntryAsync(auditEntry);
-                        _logger.LogDebug("Processed audit entry {Id} from Kafka to MongoDB", auditEntry.Id);
+                       // _logger.LogDebug("Processed audit entry {Id} from Kafka to MongoDB", auditEntry.Id);
                     }
                 }
                 await Task.Yield();
